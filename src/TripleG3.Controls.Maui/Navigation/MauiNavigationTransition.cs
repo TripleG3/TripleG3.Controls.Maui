@@ -10,18 +10,26 @@ public sealed class MauiNavigationTransition : INavigationTransition
         ArgumentNullException.ThrowIfNull(currentView);
         ArgumentNullException.ThrowIfNull(options);
         options.Validate();
+        if (IsNoOp(options.NavigateOutDelay, options.NavigateOutDuration, options.SlideDistance, options.Fade))
+        {
+            return;
+        }
 
         await DelayAsync(options.NavigateOutDelay, cancellationToken).ConfigureAwait(false);
         cancellationToken.ThrowIfCancellationRequested();
 
         double targetX = GetHorizontalOffset(options.NavigateOutDirection, options.SlideDistance);
         double targetY = GetVerticalOffset(options.NavigateOutDirection, options.SlideDistance);
-        Task movement = currentView.TranslateToAsync(targetX, targetY, ToMilliseconds(options.NavigateOutDuration), options.NavigateOutEasing);
-        Task fade = options.Fade
-            ? currentView.FadeToAsync(0d, ToMilliseconds(options.NavigateOutDuration), options.NavigateOutEasing)
-            : Task.CompletedTask;
+        Task animation = await StartAnimationAsync(currentView, () =>
+        {
+            Task movement = currentView.TranslateToAsync(targetX, targetY, ToMilliseconds(options.NavigateOutDuration), options.NavigateOutEasing);
+            Task fade = options.Fade
+                ? currentView.FadeToAsync(0d, ToMilliseconds(options.NavigateOutDuration), options.NavigateOutEasing)
+                : Task.CompletedTask;
 
-        await Task.WhenAll(movement, fade).WaitAsync(cancellationToken).ConfigureAwait(false);
+            return Task.WhenAll(movement, fade);
+        }).ConfigureAwait(false);
+        await animation.WaitAsync(cancellationToken).ConfigureAwait(false);
     }
 
     public async ValueTask NavigateInAsync(
@@ -32,21 +40,68 @@ public sealed class MauiNavigationTransition : INavigationTransition
         ArgumentNullException.ThrowIfNull(newView);
         ArgumentNullException.ThrowIfNull(options);
         options.Validate();
+        if (IsNoOp(options.NavigateInDelay, options.NavigateInDuration, options.SlideDistance, options.Fade))
+        {
+            return;
+        }
 
-        newView.TranslationX = GetHorizontalOffset(options.NavigateInDirection, options.SlideDistance);
-        newView.TranslationY = GetVerticalOffset(options.NavigateInDirection, options.SlideDistance);
-        newView.Opacity = options.Fade ? 0d : 1d;
+        await DispatchAsync(newView, () =>
+        {
+            newView.TranslationX = GetHorizontalOffset(options.NavigateInDirection, options.SlideDistance);
+            newView.TranslationY = GetVerticalOffset(options.NavigateInDirection, options.SlideDistance);
+            newView.Opacity = options.Fade ? 0d : 1d;
+        }).ConfigureAwait(false);
 
         await DelayAsync(options.NavigateInDelay, cancellationToken).ConfigureAwait(false);
         cancellationToken.ThrowIfCancellationRequested();
 
-        Task movement = newView.TranslateToAsync(0d, 0d, ToMilliseconds(options.NavigateInDuration), options.NavigateInEasing);
-        Task fade = options.Fade
-            ? newView.FadeToAsync(1d, ToMilliseconds(options.NavigateInDuration), options.NavigateInEasing)
-            : Task.CompletedTask;
+        Task animation = await StartAnimationAsync(newView, () =>
+        {
+            Task movement = newView.TranslateToAsync(0d, 0d, ToMilliseconds(options.NavigateInDuration), options.NavigateInEasing);
+            Task fade = options.Fade
+                ? newView.FadeToAsync(1d, ToMilliseconds(options.NavigateInDuration), options.NavigateInEasing)
+                : Task.CompletedTask;
 
-        await Task.WhenAll(movement, fade).WaitAsync(cancellationToken).ConfigureAwait(false);
+            return Task.WhenAll(movement, fade);
+        }).ConfigureAwait(false);
+        await animation.WaitAsync(cancellationToken).ConfigureAwait(false);
     }
+
+    private static async Task<Task> StartAnimationAsync(View view, Func<Task> startAnimation)
+    {
+        if (view.Dispatcher.IsDispatchRequired)
+        {
+            TaskCompletionSource<Task> animationSource = new(TaskCreationOptions.RunContinuationsAsynchronously);
+            await view.Dispatcher.DispatchAsync(() =>
+            {
+                try
+                {
+                    animationSource.TrySetResult(startAnimation());
+                }
+                catch (Exception exception)
+                {
+                    animationSource.TrySetException(exception);
+                }
+            }).ConfigureAwait(false);
+            return await animationSource.Task.ConfigureAwait(false);
+        }
+
+        return startAnimation();
+    }
+
+    private static Task DispatchAsync(View view, Action action)
+    {
+        if (view.Dispatcher.IsDispatchRequired)
+        {
+            return view.Dispatcher.DispatchAsync(action);
+        }
+
+        action();
+        return Task.CompletedTask;
+    }
+
+    private static bool IsNoOp(TimeSpan delay, TimeSpan duration, double slideDistance, bool fade) =>
+        delay == TimeSpan.Zero && duration == TimeSpan.Zero && slideDistance == 0d && !fade;
 
     private static Task DelayAsync(TimeSpan delay, CancellationToken cancellationToken) =>
         delay > TimeSpan.Zero ? Task.Delay(delay, cancellationToken) : Task.CompletedTask;
