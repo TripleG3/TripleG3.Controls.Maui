@@ -1,3 +1,5 @@
+using TripleG3.Cis;
+
 namespace TripleG3.Controls.Maui.Navigation;
 
 public sealed class StateNavigationBinding<TState> : IStateNavigationBinding
