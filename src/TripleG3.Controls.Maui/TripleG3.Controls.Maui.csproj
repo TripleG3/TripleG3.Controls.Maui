@@ -26,6 +26,7 @@
 
 	<ItemGroup>
 		<PackageReference Include="Microsoft.Maui.Controls" Version="$(MauiVersion)" />
+		<PackageReference Include="TripleG3.Cis" Version="0.0.1" />
 	</ItemGroup>
 
 </Project>
